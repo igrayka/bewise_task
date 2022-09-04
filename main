@@ -1,0 +1,186 @@
+https://colab.research.google.com/drive/1IuSRj6Pjx5a0rJ_cTPyE72Qi8dZBPMsy#scrollTo=kWM7KvPqFLD9
+
+#pip install yargy
+#pip install yargy ipymarkup
+
+import gdown
+import csv
+
+from glob import glob
+from random import seed, sample
+
+from yargy.tokenizer import MorphTokenizer
+from ipymarkup import show_box_markup
+from yargy import rule, Parser, or_
+from yargy.predicates import eq, type, normalized
+from yargy.pipelines import morph_pipeline
+from yargy.predicates import gram
+from yargy.interpretation import fact
+
+# ваш файл 
+gdown.download('https://www.voca-beat.ru/work/test/test_data.csv', None, quiet=False)
+
+ls_all = [] #создаем общий список всего 
+#почему-то не стал использовать PANDAS, а можно было-бы 
+
+with open("test_data.csv", encoding='utf-8') as r_file:
+    file_reader = csv.reader(r_file, delimiter = ",")
+    for x,row in enumerate(file_reader):
+        if x == 0:
+          print(f'Файл содержит столбцы: {", ".join(row)}')
+        else:
+          ls_all.append([row[0],row[1],row[2],row[3],""]) # собираем все данные из файла в один вложенный список
+print("Общее количество строк:", len(ls_all))
+total_manager_strings = 0
+for x in range(0, len(ls_all)):
+  if ls_all[x][2] == "manager":
+    total_manager_strings+=1
+print("Количество реплик менеджера:", total_manager_strings)
+total_dialogs_count = ls_all[len(ls_all)-1][0] #общее количество диалогов
+print("Общее количество диалогов:", total_dialogs_count)
+
+
+##########     Создаем YARGY парсеры для наших целей
+
+# 1 Поздоровался-ли менеджер?
+RULE_hello = morph_pipeline([ 
+    'добрый день',
+    'приветствую',
+    'здравствуйте'
+])
+MEASURE_hello = rule(RULE_hello)
+parser_hello = Parser(MEASURE_hello)
+parser_hello.name = "Поздоровался"
+parser_hello.id = 1
+
+
+# 2 Предствил-ли себя менеджер?
+RULE_myNameIs = morph_pipeline([
+    'меня зовут',
+    'мое имя',
+    'хочу представится',
+    'зовут меня',
+    'имя мое'
+])
+MEASURE_myNameIs = rule(RULE_myNameIs)
+parser_myNameIs = Parser(MEASURE_myNameIs)
+parser_myNameIs.name = "Представился"
+parser_myNameIs.id = 2
+
+
+# 3 Попрощался-ли менеджер?
+RULE_goodBuy = morph_pipeline([
+    'до свидания',
+    'всего хорошего',
+    'хорошего дня',
+    'хорошего вечера',
+])
+MEASURE_goodBuy = rule(RULE_goodBuy)
+parser_goodBuy = Parser(MEASURE_goodBuy)
+parser_goodBuy.name = "Попрощался  "
+parser_goodBuy.id = 3
+
+
+# парсер для извлечения имени менеджера (лучше иметь общий список имён менеджеров, либо вообще список имён возможных для поиска)
+# Конкретно Через факт имя у меня не получилось - слишком много мусора ( думал отсекать по длинне строки, но имя тоже бывает короткое например "ЯНА")
+
+#Name = fact(
+#    'Name',
+#    ['first']
+#)
+#NAME = gram('Name').interpretation(
+#    Name.first.inflected()
+#).interpretation(
+#    Name
+#)
+#MEASURE = rule(NAME)
+#parser_name = Parser(MEASURE)
+#parser_name.name = "ИМЯ         "
+#parser_name.id = 4
+
+
+# 4 Поиск имён 
+RULE_name = morph_pipeline([
+    'Ангелина',
+    'Максим',
+    'Анастасия',
+    'Виталий'
+    'Дмитрий'
+])
+MEASURE_name = rule(RULE_name)
+parser_name = Parser(MEASURE_name)
+parser_name.name = "ИМЯ         "
+parser_name.id = 4
+
+# 5 Поиск названий компании 
+RULE_company = morph_pipeline([
+    'диджитал',
+    'гугл',
+    'майкрософт'
+])
+MEASURE_company = rule(RULE_company)
+parser_company = Parser(MEASURE_company)
+parser_company.name = "Компания    "
+parser_company.id = 5
+
+
+
+all_parsers = [parser_hello, parser_myNameIs, parser_goodBuy, parser_name, parser_company] #Общий список всех парсеров
+# Желательно конечно создать общий парсер на все правила с интерпретацией содержания 
+
+
+#проверка на выполнение условия ПОЗДОРОВАЛСЯ И ПОПРОЩАЛСЯ и вывод в print
+current_dialog = 0
+hello = False 
+buy = False
+
+# проходим по всем строкам файла
+for x,y in enumerate(ls_all): 
+  
+  if y[0] != current_dialog:
+    # Итоги диалога
+    if hello and buy:
+      print(f"Менеджер в разговоре №{current_dialog}  ПОЗДОРОВАЛСЯ И ПОПРОЩАЛСЯ")
+    current_dialog = y[0]
+    hello = False
+    buy = False
+
+  #парсим только строки МЕНЕДЖЕРА
+  if ls_all[x][2] == "manager":  
+
+    # матчим всеми парсерами по очереди строчку
+    for parser in all_parsers: 
+      matches = []
+      spans = []
+      matches = list(parser.findall(ls_all[x][3])) #проходим парсером по текущей строчке
+      spans = [_.span for _ in matches]
+      
+      if matches:
+        print(f"номер диалога:{ls_all[x][0]}   < --{parser.name}-->   текст: {ls_all[x][3]}")
+        if parser.id == 1:
+          ls_all[x][4] += "greeting=True;" # заполняем пятый столбец INSIGHT поздоровался
+          hello = True
+        elif parser.id == 2:
+          ls_all[x][4] += "presentYourself=True;" # заполняем пятый столбец INSIGHT представился
+        elif parser.id == 3:
+          ls_all[x][4] += "goodBuy=True;" # заполняем пятый столбец INSIGHT попрощался
+          buy = True
+        elif parser.id == 4:
+          start, stop = spans[0]
+          ls_all[x][4] += f"name={ls_all[x][3][start:stop]};" # заполняем пятый столбец INSIGHT имя менеджера
+        else:
+          start, stop = spans[0]
+          ls_all[x][4] += f"company={ls_all[x][3][start:stop]};" # заполняем пятый столбец INSIGHT имя компании
+
+
+# запись в файл результатов
+with open('result.csv', 'w', newline='') as csvfile:
+    fieldnames = ['dlg_id', 'line_n', 'role', 'text', 'insight']
+    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+    writer.writeheader()
+    for x,y in enumerate(ls_all):
+      writer.writerow({'dlg_id': ls_all[x][0], 'line_n': ls_all[x][1],'role': ls_all[x][2],'text': ls_all[x][3],'insight': ls_all[x][4],})
+    
+    
+    
